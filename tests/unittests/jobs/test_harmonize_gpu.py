@@ -2,7 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from sarc.config import DEFAULTS_FLAG, MIG_FLAG, ClusterConfig, PrivateKeyInfo, config
+from sarc.config import (
+    DEFAULTS_FLAG,
+    MIG_FLAG,
+    ClusterConfig,
+    ConfigurationError,
+    PrivateKeyInfo,
+    config,
+)
 
 GPUS_PER_NODES = {
     "node[0-9]": {"gpu1": "DESCRIPTIVE GPU 1", "badly_named_gpu1": "$gpu1"},
@@ -58,3 +65,37 @@ def test_harmonize_gpu(node, gpu_type, expected, gpus_per_nodes):
 def test_clusterconfig_harmonize_gpu(node, gpu_type, expected):
     cluster = config.clusters["raisin_no_prometheus"]
     assert cluster.harmonize_gpu(node, gpu_type) == expected
+
+
+def _cluster_with_matchers(matchers):
+    return ClusterConfig(
+        host="test",
+        private_key=PrivateKeyInfo(file=Path("tests/id_test"), password="12345"),
+        user_domain="mydomain",
+        prometheus_matchers=matchers,
+    )
+
+
+def test_prometheus_matchers_default_empty():
+    assert config.clusters["raisin_no_prometheus"].prometheus_matchers == {}
+
+
+def test_prometheus_matchers_valid():
+    cluster = _cluster_with_matchers({"cluster": "tamia", "_env2": 'a"b'})
+    assert cluster.prometheus_matchers == {"cluster": "tamia", "_env2": 'a"b'}
+
+
+@pytest.mark.parametrize(
+    "label,match",
+    [
+        ("", "Invalid Prometheus label name"),
+        ("2cluster", "Invalid Prometheus label name"),
+        ("clu-ster", "Invalid Prometheus label name"),
+        ('cluster="x", foo', "Invalid Prometheus label name"),
+        ("__name__", "cannot override"),
+        ("slurmjobid", "cannot override"),
+    ],
+)
+def test_prometheus_matchers_invalid_label(label, match):
+    with pytest.raises(ConfigurationError, match=match):
+        _cluster_with_matchers({label: "x"})

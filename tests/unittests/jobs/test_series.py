@@ -12,7 +12,11 @@ from sarc.scraping.dcgm import (
     DCGM_FP64_NOT_PERMISSIONED,
     DCGM_FP64_NOT_SUPPORTED,
 )
-from sarc.scraping.series import compute_job_statistics, compute_metric_statistics
+from sarc.scraping.series import (
+    compute_job_statistics,
+    compute_metric_statistics,
+    job_series_selector,
+)
 from tests.db.factory import base_job
 
 T0 = int(datetime(2023, 1, 1, tzinfo=UTC).timestamp())
@@ -266,3 +270,29 @@ def test_compute_job_statistics_gpu_utilization_without_prof():
     stats = compute_job_statistics(job, series)
     assert stats["gpu_utilization"].mean == pytest.approx(0.55)
     assert "gpu_sm_active" not in stats
+
+
+@pytest.mark.parametrize(
+    "metrics,job_ids,matchers,expected",
+    [
+        (["m"], ["1"], {}, 'm{slurmjobid=~"^1$"}'),
+        (["m1", "m2"], ["1", "2"], {}, '{__name__=~"^(m1|m2)$", slurmjobid=~"^1|2$"}'),
+        (["m"], ["1"], {"cluster": "tamia"}, 'm{slurmjobid=~"^1$", cluster="tamia"}'),
+        (
+            ["m1", "m2"],
+            ["1"],
+            {"cluster": "tamia", "env": "prod"},
+            '{__name__=~"^(m1|m2)$", slurmjobid=~"^1$", cluster="tamia", env="prod"}',
+        ),
+        (["m"], ["1"], {"cluster": ""}, 'm{slurmjobid=~"^1$", cluster=""}'),
+        (
+            ["m"],
+            ["1"],
+            {"cluster": 'a"b\\c\nd'},
+            'm{slurmjobid=~"^1$", cluster="a\\"b\\\\c\\nd"}',
+        ),
+    ],
+    ids=["single", "multi", "matcher", "multi_matchers", "empty_value", "escaped"],
+)
+def test_job_series_selector(metrics, job_ids, matchers, expected):
+    assert job_series_selector(metrics, job_ids, matchers) == expected

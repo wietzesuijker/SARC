@@ -75,6 +75,9 @@ class ClusterConfig:
     prometheus_url: str | None = None
     prometheus_headers: dict[str, Secret[str]] = field(default_factory=dict)
     prometheus_check_ssl: bool = True
+    # Extra label matchers (label name -> exact value) added to the job series
+    # selector, e.g. {"cluster": "tamia"} when several clusters share one Thanos
+    prometheus_matchers: dict[str, str] = field(default_factory=dict)
     name: str | None = None
     sacct_bin: str = "sacct"
     ignore_tz_utc: bool = False
@@ -89,6 +92,15 @@ class ClusterConfig:
     gpus_per_nodes: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def __post_init__(self):
+        for label in self.prometheus_matchers:
+            if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", label):
+                raise ConfigurationError(
+                    f"Invalid Prometheus label name in prometheus_matchers: {label!r}"
+                )
+            if label in ("__name__", "slurmjobid"):
+                raise ConfigurationError(
+                    f"prometheus_matchers cannot override the {label!r} label"
+                )
         # Convert node list to node names with `expand_hostlist`
         self.gpus_per_nodes = {
             node: {

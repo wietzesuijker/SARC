@@ -41,6 +41,9 @@ sarc:
       prometheus_url:
         http://prometheus01.server.mila.quebec:9090/ # Prometheus server with data from https://github.com/guilbaults/slurm-job-exporter,
         # can be ommited if there is no data
+      prometheus_matchers: # Optional extra exact-match labels added to the job series selector,
+        # e.g. to tell clusters apart when several share one Prometheus/Thanos (job ids can collide)
+        cluster: mila
       start_date: "2022-04-01" # The date the cluster went online
       billing_is_gpu: true # Deprecated, can be ignored
       user_domain: mila # The domain key for users on this cluster.  Refer to the user plugins documentation for more information

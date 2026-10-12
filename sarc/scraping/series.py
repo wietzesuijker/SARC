@@ -1,7 +1,8 @@
+import json
 import logging
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import Callable, Sequence, TypedDict, cast
+from typing import Callable, Mapping, Sequence, TypedDict, cast
 
 import numpy as np
 
@@ -11,6 +12,38 @@ from sarc.scraping.dcgm import DCGM_FP64_BLANK, dcgm_prof_blackout
 from sarc.traces import trace_decorator
 
 logger = logging.getLogger(__name__)
+
+
+def _promql_string(value: str) -> str:
+    """Quote `value` as a PromQL double-quoted string literal.
+
+    PromQL strings use Go escaping, of which JSON's escapes are a subset.
+    """
+    return json.dumps(value, ensure_ascii=False)
+
+
+def job_series_selector(
+    metrics: Sequence[str], job_ids: Sequence[str], matchers: Mapping[str, str]
+) -> str:
+    """Build the series selector for the given metrics and Slurm job ids.
+
+    `matchers` are extra exact-match labels (ClusterConfig.prometheus_matchers),
+    appended after the job id matcher.
+    """
+    str_job_ids = "|".join(job_ids)
+    if len(metrics) == 1:
+        prefix = metrics[0]
+        label_exprs = [f'slurmjobid=~"^{str_job_ids}$"']
+    else:
+        prefix = ""
+        label_exprs = [
+            f'__name__=~"^({"|".join(metrics)})$"',
+            f'slurmjobid=~"^{str_job_ids}$"',
+        ]
+    label_exprs += [
+        f"{label}={_promql_string(value)}" for label, value in matchers.items()
+    ]
+    return prefix + "{" + ", ".join(label_exprs) + "}"
 
 
 @trace_decorator()
@@ -66,24 +99,15 @@ def get_job_time_series_batched(
     global_offset = max(0, int((now - max_end).total_seconds()))
     offset_string = f" offset {global_offset}s" if global_offset > 0 else ""
 
-    str_job_ids = "|".join(job_map.keys())
-    if len(metrics) == 1:
-        prefix = metrics[0]
-        label_exprs = [f'slurmjobid=~"^{str_job_ids}$"']
-    else:
-        prefix = ""
-        label_exprs = [
-            f'__name__=~"^({"|".join(metrics)})$"',
-            f'slurmjobid=~"^{str_job_ids}$"',
-        ]
-
-    selector = prefix + "{" + ", ".join(label_exprs) + "}"
+    cluster = config.clusters[jobs[0].cluster.name]
+    selector = job_series_selector(
+        metrics, list(job_map.keys()), cluster.prometheus_matchers
+    )
     combined_query = f"({selector}[{global_duration}s]{offset_string})"
 
     logger.debug(f"batched prometheus query: {combined_query}")
 
-    cluster_name = jobs[0].cluster.name
-    raw_results = config.clusters[cluster_name].prometheus.custom_query(combined_query)
+    raw_results = cluster.prometheus.custom_query(combined_query)
 
     # Map returned series back to jobs & filter values to exact job time windows
     for series_data in raw_results:
